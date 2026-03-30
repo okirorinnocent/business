@@ -41,20 +41,23 @@ st.markdown("""
 
 # --- 2. SECURE CONNECTION ---
 try:
-    # These must be set in your Streamlit Cloud "Secrets" or local secrets.toml
-    APPWRITE_ENDPOINT = st.secrets["APPWRITE_ENDPOINT"]
-    APPWRITE_PROJECT_ID = st.secrets["APPWRITE_PROJECT_ID"]
-    APPWRITE_API_KEY = st.secrets["APPWRITE_API_KEY"]
-    DATABASE_ID = st.secrets["DATABASE_ID"]
-    INVENTORY_COLLECTION_ID = st.secrets["INVENTORY_COLLECTION_ID"]
+    # Checking if secrets exist
+    if "APPWRITE_API_KEY" not in st.secrets:
+        st.error("❌ Secrets not detected! If running locally, create .streamlit/secrets.toml. If on Cloud, add them to the Secrets menu.")
+        st.stop()
 
     client = Client()
-    client.set_endpoint(APPWRITE_ENDPOINT)
-    client.set_project(APPWRITE_PROJECT_ID)
-    client.set_key(APPWRITE_API_KEY)
+    client.set_endpoint(st.secrets["APPWRITE_ENDPOINT"])
+    client.set_project(st.secrets["APPWRITE_PROJECT_ID"])
+    client.set_key(st.secrets["APPWRITE_API_KEY"])
     db = Databases(client)
+
+    # IDs from your secrets
+    DB_ID = st.secrets["DATABASE_ID"]
+    COLL_ID = st.secrets["INVENTORY_COLLECTION_ID"]
+
 except Exception as e:
-    st.error("Credential Error: Please check your Streamlit Secrets.")
+    st.error(f"Credential Error: {e}")
     st.stop()
 
 # --- 3. HELPER FUNCTIONS ---
@@ -73,8 +76,7 @@ def apply_chart_style(fig):
 # --- 4. NAVIGATION ---
 st.sidebar.title("🚀 SmartStock")
 st.sidebar.markdown("---")
-menu = st.sidebar.selectbox(
-    "Dashboard", ["Inventory Hub", "Customer Churn", "Marketing ROI"])
+menu = st.sidebar.selectbox("Dashboard", ["Inventory Hub", "Customer Churn"])
 
 # --- 5. MODULE: INVENTORY HUB ---
 if menu == "Inventory Hub":
@@ -90,7 +92,7 @@ if menu == "Inventory Hub":
         if st.button("Add to Appwrite"):
             if name:
                 try:
-                    db.create_document(DATABASE_ID, INVENTORY_COLLECTION_ID, ID.unique(), {
+                    db.create_document(DB_ID, COLL_ID, ID.unique(), {
                         "item_name": name,
                         "current_stock": int(stock)
                     })
@@ -98,33 +100,36 @@ if menu == "Inventory Hub":
                     st.rerun()
                 except Exception as e:
                     st.error(f"Write Error: {e}")
+                    st.info(
+                        "Tip: Ensure 'item_name' and 'current_stock' Attributes exist in Appwrite.")
             else:
                 st.warning("Please enter an item name.")
 
-    # Fetch Data with "Subscriptable" Fix
+    # --- FETCH DATA (With Subscriptable Fix) ---
     try:
-        response = db.list_documents(DATABASE_ID, INVENTORY_COLLECTION_ID)
+        response = db.list_documents(DB_ID, COLL_ID)
 
-        # Determine if response is a dict or an object
-        docs = response['documents'] if isinstance(
-            response, dict) else response.documents
+        # Handle both Dict and Object responses from Appwrite SDK
+        docs = response.documents if hasattr(
+            response, 'documents') else response.get('documents', [])
 
         if docs:
             items_list = []
             doc_ids = []
             for doc in docs:
-                # Handle data extraction safely
-                data = doc['data'] if isinstance(doc, dict) else doc.data
-                doc_id = doc['$id'] if isinstance(doc, dict) else doc.get(
-                    '$id', getattr(doc, 'id', None))
+                # Safe data extraction
+                data = getattr(doc, 'data', doc.get('data', {})) if not isinstance(
+                    doc, dict) else doc.get('data', {})
+                d_id = getattr(doc, '$id', doc.get('$id')) if not isinstance(
+                    doc, dict) else doc.get('$id')
 
-                items_list.append(data)
-                doc_ids.append(doc_id)
+                if data:
+                    items_list.append(data)
+                    doc_ids.append(d_id)
 
             df = pd.DataFrame(items_list)
 
             col_left, col_right = st.columns([1.2, 1])
-
             with col_left:
                 st.subheader("Live Inventory")
                 st.dataframe(df, use_container_width=True, hide_index=True)
@@ -134,33 +139,27 @@ if menu == "Inventory Hub":
                         "Select item to remove:", df['item_name'].tolist())
                     if st.button("Confirm Delete"):
                         idx = df[df['item_name'] == to_delete].index[0]
-                        db.delete_document(
-                            DATABASE_ID, INVENTORY_COLLECTION_ID, doc_ids[idx])
+                        db.delete_document(DB_ID, COLL_ID, doc_ids[idx])
                         st.rerun()
 
             with col_right:
                 st.subheader("Stock Distribution")
-                fig = px.pie(df, names="item_name", values="current_stock",
-                             hole=0.4, color_discrete_sequence=px.colors.sequential.Blues_r)
+                fig = px.pie(df, names="item_name",
+                             values="current_stock", hole=0.4)
                 st.plotly_chart(apply_chart_style(
                     fig), use_container_width=True)
         else:
             st.info("No items in stock. Add one above!")
     except Exception as e:
         st.error(f"Fetch Error: {e}")
+        st.warning(
+            "Check if 'INVENTORY_COLLECTION_ID' in your secrets is the ID string (e.g. 65db...), not just the word 'inventory'.")
 
 # --- 6. MODULE: CUSTOMER CHURN ---
-elif menu == "Customer Churn":
+else:
     st.title("📉 Churn Prediction")
-    st.info("Calculate customer health scores based on engagement.")
-    cust_name = st.text_input("Customer Name")
     eng = st.slider("Engagement Level (%)", 0, 100, 50)
     if st.button("Predict Risk"):
         risk = 100 - eng
         st.metric("Risk Score", f"{risk}%", delta="High Risk" if risk >
                   60 else "Healthy", delta_color="inverse")
-
-# --- 7. MODULE: MARKETING ROI ---
-else:
-    st.title("💰 Marketing ROI")
-    st.info("Ready to connect your Campaign Spend collection.")

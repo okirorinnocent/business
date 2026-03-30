@@ -41,21 +41,15 @@ st.markdown("""
 
 # --- 2. SECURE CONNECTION ---
 try:
-    # Checking if secrets exist
-    if "APPWRITE_API_KEY" not in st.secrets:
-        st.error("❌ Secrets not detected! If running locally, create .streamlit/secrets.toml. If on Cloud, add them to the Secrets menu.")
-        st.stop()
-
+    # Ensure these match your Streamlit Secrets exactly
     client = Client()
     client.set_endpoint(st.secrets["APPWRITE_ENDPOINT"])
     client.set_project(st.secrets["APPWRITE_PROJECT_ID"])
     client.set_key(st.secrets["APPWRITE_API_KEY"])
     db = Databases(client)
 
-    # IDs from your secrets
     DB_ID = st.secrets["DATABASE_ID"]
     COLL_ID = st.secrets["INVENTORY_COLLECTION_ID"]
-
 except Exception as e:
     st.error(f"Credential Error: {e}")
     st.stop()
@@ -100,60 +94,57 @@ if menu == "Inventory Hub":
                     st.rerun()
                 except Exception as e:
                     st.error(f"Write Error: {e}")
-                    st.info(
-                        "Tip: Ensure 'item_name' and 'current_stock' Attributes exist in Appwrite.")
             else:
                 st.warning("Please enter an item name.")
 
-    # --- FETCH DATA (With Subscriptable Fix) ---
+    # --- FETCH DATA (UNIVERSAL FIX) ---
     try:
         response = db.list_documents(DB_ID, COLL_ID)
 
-        # Handle both Dict and Object responses from Appwrite SDK
-        docs = response.documents if hasattr(
-            response, 'documents') else response.get('documents', [])
+        # Determine if it's an Object or Dictionary
+        docs = getattr(response, 'documents', response.get('documents', [])) if not isinstance(
+            response, dict) else response.get('documents', [])
 
         if docs:
             items_list = []
             doc_ids = []
             for doc in docs:
-                # Safe data extraction
-                data = getattr(doc, 'data', doc.get('data', {})) if not isinstance(
-                    doc, dict) else doc.get('data', {})
-                d_id = getattr(doc, '$id', doc.get('$id')) if not isinstance(
-                    doc, dict) else doc.get('$id')
+                # UNIVERSAL EXTRACTION: Works for Objects and Dicts
+                data = getattr(doc, 'data', doc.get('data', {})
+                               if isinstance(doc, dict) else {})
+                d_id = getattr(doc, '$id', doc.get('$id')
+                               if isinstance(doc, dict) else None)
 
                 if data:
                     items_list.append(data)
                     doc_ids.append(d_id)
 
-            df = pd.DataFrame(items_list)
+            if items_list:
+                df = pd.DataFrame(items_list)
 
-            col_left, col_right = st.columns([1.2, 1])
-            with col_left:
-                st.subheader("Live Inventory")
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                col_left, col_right = st.columns([1.2, 1])
+                with col_left:
+                    st.subheader("Live Inventory")
+                    st.dataframe(df, use_container_width=True, hide_index=True)
 
-                with st.popover("🗑️ Manage Inventory"):
-                    to_delete = st.selectbox(
-                        "Select item to remove:", df['item_name'].tolist())
-                    if st.button("Confirm Delete"):
-                        idx = df[df['item_name'] == to_delete].index[0]
-                        db.delete_document(DB_ID, COLL_ID, doc_ids[idx])
-                        st.rerun()
+                    with st.popover("🗑️ Manage Inventory"):
+                        to_delete = st.selectbox(
+                            "Select item to remove:", df['item_name'].tolist())
+                        if st.button("Confirm Delete"):
+                            idx = df[df['item_name'] == to_delete].index[0]
+                            db.delete_document(DB_ID, COLL_ID, doc_ids[idx])
+                            st.rerun()
 
-            with col_right:
-                st.subheader("Stock Distribution")
-                fig = px.pie(df, names="item_name",
-                             values="current_stock", hole=0.4)
-                st.plotly_chart(apply_chart_style(
-                    fig), use_container_width=True)
+                with col_right:
+                    st.subheader("Stock Distribution")
+                    fig = px.pie(df, names="item_name",
+                                 values="current_stock", hole=0.4)
+                    st.plotly_chart(apply_chart_style(
+                        fig), use_container_width=True)
         else:
             st.info("No items in stock. Add one above!")
     except Exception as e:
         st.error(f"Fetch Error: {e}")
-        st.warning(
-            "Check if 'INVENTORY_COLLECTION_ID' in your secrets is the ID string (e.g. 65db...), not just the word 'inventory'.")
 
 # --- 6. MODULE: CUSTOMER CHURN ---
 else:

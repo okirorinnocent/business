@@ -37,23 +37,30 @@ st.markdown("""
         background-color: #0056b3;
         box-shadow: 0px 0px 15px rgba(0, 123, 255, 0.5);
     }
+    /* Simple fix for dark mode dataframes */
+    .stDataFrame div[data-testid="stTable"] {
+        background-color: transparent !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. APPWRITE CONNECTION SETTINGS ---
-APPWRITE_ENDPOINT = "https://fra.cloud.appwrite.io/v1"
-APPWRITE_PROJECT_ID = "69caa235001a80451107"
-APPWRITE_API_KEY = "standard_4be6add50fbb8e35010a8c86de7133f164e5839e2f55c172a5eaa642c4317c65d4bf4e4c998ab89cb7d5a5febe79775aa691a21791e6d082b1df53a8cdc7562745ab5c10701c7df7dc106e334c49e0ef4e557528350583fb2c9e680d4ced46b9c775386d8d1bbdaf0e5e180b712067158c09d89ac13866fa371ee6fe57741c8c"
-DATABASE_ID = "69caa399001e100948dd"
+# --- 2. SECURE CONNECTION (Using Streamlit Secrets) ---
+try:
+    APPWRITE_ENDPOINT = st.secrets["APPWRITE_ENDPOINT"]
+    APPWRITE_PROJECT_ID = st.secrets["APPWRITE_PROJECT_ID"]
+    APPWRITE_API_KEY = st.secrets["APPWRITE_API_KEY"]
+    DATABASE_ID = st.secrets["DATABASE_ID"]
+    INVENTORY_COLLECTION_ID = st.secrets["INVENTORY_COLLECTION_ID"]
 
-# IMPORTANT: Paste your actual Collection ID from Appwrite here!
-INVENTORY_COLLECTION_ID = "REPLACE_WITH_YOUR_COLLECTION_ID"
-
-client = Client()
-client.set_endpoint(APPWRITE_ENDPOINT)
-client.set_project(APPWRITE_PROJECT_ID)
-client.set_key(APPWRITE_API_KEY)
-db = Databases(client)
+    client = Client()
+    client.set_endpoint(APPWRITE_ENDPOINT)
+    client.set_project(APPWRITE_PROJECT_ID)
+    client.set_key(APPWRITE_API_KEY)
+    db = Databases(client)
+except Exception as e:
+    st.error(
+        "Missing Credentials! Please add your Appwrite keys to Streamlit Secrets.")
+    st.stop()
 
 # --- 3. HELPER FUNCTIONS ---
 
@@ -96,48 +103,46 @@ if menu == "Inventory Hub":
                     st.success(f"✅ {name} added!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Appwrite Error: {e}")
             else:
                 st.warning("Please enter an item name.")
 
     # Data Display & Visualization
     try:
         response = db.list_documents(DATABASE_ID, INVENTORY_COLLECTION_ID)
-        items = [doc['data'] for doc in response['documents']]
-        # Get document IDs for deletion logic
-        ids = [doc['$id'] for doc in response['documents']]
+        docs = response['documents']
 
-        if items:
+        if docs:
+            items = [doc['data'] for doc in docs]
+            ids = [doc['$id'] for doc in docs]
             df = pd.DataFrame(items)
 
-            # Layout for Table and Chart
-            col_left, col_right = st.columns([1, 1])
+            col_left, col_right = st.columns([1.2, 1])
 
             with col_left:
-                st.subheader("Current Stock List")
+                st.subheader("Live Inventory")
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
-                # Simple Delete Logic (Optional Improvement)
-                to_delete = st.selectbox("Select item to remove:", [
-                                         "None"] + df['item_name'].tolist())
-                if st.button("🗑️ Delete Selected Item") and to_delete != "None":
-                    # Find the document ID that matches the name
-                    idx = df[df['item_name'] == to_delete].index[0]
-                    db.delete_document(
-                        DATABASE_ID, INVENTORY_COLLECTION_ID, ids[idx])
-                    st.rerun()
+                # Deletion logic
+                with st.popover("🗑️ Manage Inventory"):
+                    to_delete = st.selectbox(
+                        "Select item to remove:", df['item_name'].tolist())
+                    if st.button("Confirm Delete"):
+                        idx = df[df['item_name'] == to_delete].index[0]
+                        db.delete_document(
+                            DATABASE_ID, INVENTORY_COLLECTION_ID, ids[idx])
+                        st.rerun()
 
             with col_right:
-                st.subheader("Visual Overview")
-                fig = px.bar(df, x="item_name", y="current_stock",
-                             color="current_stock",
-                             color_continuous_scale='Blues')
+                st.subheader("Stock Distribution")
+                fig = px.pie(df, names="item_name", values="current_stock",
+                             hole=0.4, color_discrete_sequence=px.colors.sequential.Blues_r)
                 st.plotly_chart(apply_chart_style(
                     fig), use_container_width=True)
         else:
-            st.info("The database is currently empty. Add your first item above!")
+            st.info("The database is currently empty.")
     except Exception as e:
-        st.error("Could not fetch data. Check your Collection ID and Permissions.")
+        st.error(f"Fetch Error: {e}")
 
 # --- 6. MODULE: CUSTOMER CHURN ---
 elif menu == "Customer Churn":
@@ -151,15 +156,10 @@ elif menu == "Customer Churn":
         if st.button("Predict Churn Risk"):
             risk_score = 100 - engagement
             status = "High Risk" if risk_score > 60 else "Healthy"
-
             st.metric(label="Calculated Risk",
                       value=f"{risk_score}%", delta=status, delta_color="inverse")
-            st.info(
-                "Note: This logic is currently local. Connect a 'customers' collection to save this data.")
 
 # --- 7. MODULE: MARKETING ROI ---
 else:
     st.title("💰 Marketing ROI")
-    st.markdown("Track campaign performance and spending.")
-    st.info(
-        "Module coming soon: Connect your Marketing Spend collection to visualize ROI.")
+    st.info("This module is ready for your Marketing Spend data collection.")

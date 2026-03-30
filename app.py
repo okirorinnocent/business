@@ -8,7 +8,6 @@ import plotly.express as px
 # --- 1. APP CONFIG & HIGH-END STYLING ---
 st.set_page_config(page_title="SmartStock BI", page_icon="📊", layout="wide")
 
-# Modern Dark Theme with Glassmorphism
 st.markdown("""
     <style>
     .stApp {
@@ -19,11 +18,11 @@ st.markdown("""
         background-color: #000814 !important;
         border-right: 1px solid rgba(255, 255, 255, 0.1);
     }
-    [data-testid="stMetric"], .stExpander, .stDataFrame {
+    [data-testid="stMetric"], .stExpander, [data-testid="stPopover"] > button {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         backdrop-filter: blur(12px);
-        border-radius: 15px !important;
+        border-radius: 12px !important;
     }
     h1, h2, h3 { color: #00d4ff !important; }
     .stButton>button {
@@ -37,15 +36,12 @@ st.markdown("""
         background-color: #0056b3;
         box-shadow: 0px 0px 15px rgba(0, 123, 255, 0.5);
     }
-    /* Simple fix for dark mode dataframes */
-    .stDataFrame div[data-testid="stTable"] {
-        background-color: transparent !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. SECURE CONNECTION (Using Streamlit Secrets) ---
+# --- 2. SECURE CONNECTION ---
 try:
+    # These must be set in your Streamlit Cloud "Secrets" or local secrets.toml
     APPWRITE_ENDPOINT = st.secrets["APPWRITE_ENDPOINT"]
     APPWRITE_PROJECT_ID = st.secrets["APPWRITE_PROJECT_ID"]
     APPWRITE_API_KEY = st.secrets["APPWRITE_API_KEY"]
@@ -58,8 +54,7 @@ try:
     client.set_key(APPWRITE_API_KEY)
     db = Databases(client)
 except Exception as e:
-    st.error(
-        "Missing Credentials! Please add your Appwrite keys to Streamlit Secrets.")
+    st.error("Credential Error: Please check your Streamlit Secrets.")
     st.stop()
 
 # --- 3. HELPER FUNCTIONS ---
@@ -75,7 +70,7 @@ def apply_chart_style(fig):
     return fig
 
 
-# --- 4. SIDEBAR NAVIGATION ---
+# --- 4. NAVIGATION ---
 st.sidebar.title("🚀 SmartStock")
 st.sidebar.markdown("---")
 menu = st.sidebar.selectbox(
@@ -85,11 +80,10 @@ menu = st.sidebar.selectbox(
 if menu == "Inventory Hub":
     st.title("📦 SmartStock Inventory")
 
-    # Registration Form
     with st.expander("➕ Register New Stock Item"):
         c1, c2 = st.columns(2)
         with c1:
-            name = st.text_input("Item Name", placeholder="e.g. Laptop")
+            name = st.text_input("Item Name", placeholder="e.g. MacBook Pro")
         with c2:
             stock = st.number_input("Quantity", min_value=0, step=1)
 
@@ -103,19 +97,31 @@ if menu == "Inventory Hub":
                     st.success(f"✅ {name} added!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Appwrite Error: {e}")
+                    st.error(f"Write Error: {e}")
             else:
                 st.warning("Please enter an item name.")
 
-    # Data Display & Visualization
+    # Fetch Data with "Subscriptable" Fix
     try:
         response = db.list_documents(DATABASE_ID, INVENTORY_COLLECTION_ID)
-        docs = response['documents']
+
+        # Determine if response is a dict or an object
+        docs = response['documents'] if isinstance(
+            response, dict) else response.documents
 
         if docs:
-            items = [doc['data'] for doc in docs]
-            ids = [doc['$id'] for doc in docs]
-            df = pd.DataFrame(items)
+            items_list = []
+            doc_ids = []
+            for doc in docs:
+                # Handle data extraction safely
+                data = doc['data'] if isinstance(doc, dict) else doc.data
+                doc_id = doc['$id'] if isinstance(doc, dict) else doc.get(
+                    '$id', getattr(doc, 'id', None))
+
+                items_list.append(data)
+                doc_ids.append(doc_id)
+
+            df = pd.DataFrame(items_list)
 
             col_left, col_right = st.columns([1.2, 1])
 
@@ -123,14 +129,13 @@ if menu == "Inventory Hub":
                 st.subheader("Live Inventory")
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
-                # Deletion logic
                 with st.popover("🗑️ Manage Inventory"):
                     to_delete = st.selectbox(
                         "Select item to remove:", df['item_name'].tolist())
                     if st.button("Confirm Delete"):
                         idx = df[df['item_name'] == to_delete].index[0]
                         db.delete_document(
-                            DATABASE_ID, INVENTORY_COLLECTION_ID, ids[idx])
+                            DATABASE_ID, INVENTORY_COLLECTION_ID, doc_ids[idx])
                         st.rerun()
 
             with col_right:
@@ -140,26 +145,22 @@ if menu == "Inventory Hub":
                 st.plotly_chart(apply_chart_style(
                     fig), use_container_width=True)
         else:
-            st.info("The database is currently empty.")
+            st.info("No items in stock. Add one above!")
     except Exception as e:
         st.error(f"Fetch Error: {e}")
 
 # --- 6. MODULE: CUSTOMER CHURN ---
 elif menu == "Customer Churn":
     st.title("📉 Churn Prediction")
-    st.markdown("Assess customer health and save results to Appwrite.")
-
-    with st.container():
-        cust_name = st.text_input("Customer Name")
-        engagement = st.slider("Engagement Level (%)", 0, 100, 50)
-
-        if st.button("Predict Churn Risk"):
-            risk_score = 100 - engagement
-            status = "High Risk" if risk_score > 60 else "Healthy"
-            st.metric(label="Calculated Risk",
-                      value=f"{risk_score}%", delta=status, delta_color="inverse")
+    st.info("Calculate customer health scores based on engagement.")
+    cust_name = st.text_input("Customer Name")
+    eng = st.slider("Engagement Level (%)", 0, 100, 50)
+    if st.button("Predict Risk"):
+        risk = 100 - eng
+        st.metric("Risk Score", f"{risk}%", delta="High Risk" if risk >
+                  60 else "Healthy", delta_color="inverse")
 
 # --- 7. MODULE: MARKETING ROI ---
 else:
     st.title("💰 Marketing ROI")
-    st.info("This module is ready for your Marketing Spend data collection.")
+    st.info("Ready to connect your Campaign Spend collection.")

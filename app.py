@@ -5,31 +5,11 @@ from appwrite.services.databases import Databases
 from appwrite.id import ID
 import plotly.express as px
 
-# --- 1. SETTINGS & HIGH-CONTRAST THEME ---
+# --- 1. SETTINGS ---
 st.set_page_config(page_title="SmartStock Pro BI",
                    page_icon="📈", layout="wide")
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #000b1a; color: #FFFFFF; }
-    [data-testid="stSidebar"] { background-color: #001529; }
-    [data-testid="stSidebar"] * { color: #FFFFFF !important; }
-    [data-testid="stMetric"] {
-        background-color: #001f3f; 
-        border: 2px solid #00f2fe; 
-        border-radius: 12px;
-        padding: 15px;
-    }
-    [data-testid="stMetricValue"] { color: #00f2fe !important; font-weight: 800; }
-    .stButton>button {
-        background: linear-gradient(90deg, #007bff, #00f2fe);
-        color: #000000; font-weight: 900; border: none;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 2. DIRECT DATABASE CONNECTION (NO SECRETS FILE NEEDED) ---
-# I have embedded your keys here so the app doesn't have to look for a file
+# --- 2. DATABASE CONNECTION (HARD-CODED FOR STABILITY) ---
 try:
     client = Client()
     client.set_endpoint("https://fra.cloud.appwrite.io/v1")
@@ -40,89 +20,76 @@ try:
     DB_ID = "69caa399001e100948dd"
     COLL_ID = "69cace6f0013b2a6aace"
 except Exception as e:
-    st.error(f"❌ Connection Error: {e}")
+    st.error(f"❌ Connection Setup Failed: {e}")
     st.stop()
 
-# --- 3. CHART HELPER ---
-
-
-def apply_clean_style(fig, chart_type="bar"):
-    if chart_type == "pie":
-        fig.update_traces(marker=dict(
-            colors=['#00f2fe', '#4facfe', '#a1c4fd', '#c2e9fb']))
-    else:
-        fig.update_traces(marker_color='#00f2fe')
-    fig.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        font_color="#FFFFFF", font_size=12, margin=dict(l=10, r=10, t=30, b=10)
-    )
-    return fig
-
-
-# --- 4. NAVIGATION ---
+# --- 3. NAVIGATION ---
 st.sidebar.title("🚀 SmartStock Pro")
 page = st.sidebar.radio(
-    "Navigate", ["Business Dashboard", "Inventory Control", "Customer Churn"])
+    "Navigate", ["Business Dashboard", "Inventory Control"])
 
-# --- 5. PAGE: BUSINESS DASHBOARD ---
+# --- 4. PAGE: BUSINESS DASHBOARD ---
 if page == "Business Dashboard":
     st.title("📊 Executive Overview")
+
     try:
+        # Fetch data
         result = db.list_documents(DB_ID, COLL_ID)
-        df = pd.DataFrame([d.data for d in result.documents])
-        if not df.empty:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total SKU Count", len(df))
-            m2.metric("Total Units", f"{df['current_stock'].sum():,}")
-            m3.metric("Low Stock Alerts", len(df[df['current_stock'] <= 5]))
 
-            st.write("---")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader("Inventory Distribution")
-                st.plotly_chart(apply_clean_style(px.pie(
-                    df, names="item_name", values="current_stock", hole=0.6), "pie"), use_container_width=True)
-            with c2:
-                st.subheader("Stock Levels")
-                st.plotly_chart(apply_clean_style(
-                    px.bar(df, x="item_name", y="current_stock")), use_container_width=True)
+        # SAFETY CHECK 1: Is there any data?
+        if not result.documents:
+            st.info(
+                "👋 Welcome! Your database is empty. Go to 'Inventory Control' to add your first product.")
         else:
-            st.info("No data found in Appwrite.")
+            # Convert to DataFrame
+            df = pd.DataFrame([d.data for d in result.documents])
+
+            # SAFETY CHECK 2: Do the columns exist?
+            if 'item_name' in df.columns and 'current_stock' in df.columns:
+                # Top Metrics
+                m1, m2 = st.columns(2)
+                m1.metric("Total SKUs", len(df))
+
+                # Convert stock to numbers just in case they were saved as text
+                df['current_stock'] = pd.to_numeric(
+                    df['current_stock'], errors='coerce')
+                total_stock = df['current_stock'].sum()
+                m2.metric("Warehouse Volume", f"{int(total_stock):,}")
+
+                # Chart
+                fig = px.bar(df, x="item_name", y="current_stock",
+                             title="Live Stock Levels", color_discrete_sequence=['#00f2fe'])
+                fig.update_layout(template="plotly_dark",
+                                  paper_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.error(
+                    "⚠️ Data structure mismatch. Ensure your Appwrite Attributes are 'item_name' and 'current_stock'.")
+                st.write("Found columns:", list(df.columns))
+
     except Exception as e:
-        st.error(f"Data Sync Error: {e}")
+        st.error(f"⚠️ Dashboard Error: {e}")
 
-# --- 6. PAGE: INVENTORY CONTROL ---
-elif page == "Inventory Control":
-    st.title("⚙️ Warehouse Operations")
-    tab1, tab2 = st.tabs(["🆕 Register Item", "🔄 Update Quantity"])
-
-    with tab1:
-        with st.form("new_item"):
-            name = st.text_input("Product Name")
-            qty = st.number_input("Starting Quantity", min_value=0)
-            if st.form_submit_button("Add to Database"):
-                db.create_document(DB_ID, COLL_ID, ID.unique(), {
-                                   "item_name": name, "current_stock": int(qty)})
-                st.success("Added!")
-                st.rerun()
-
-    with tab2:
-        result = db.list_documents(DB_ID, COLL_ID)
-        items = {d.data['item_name']: d.id for d in result.documents}
-        if items:
-            target = st.selectbox("Select Item", list(items.keys()))
-            change = st.number_input("Adjustment (+/-)", step=1)
-            if st.button("Update"):
-                # Get current stock first
-                doc = db.get_document(DB_ID, COLL_ID, items[target])
-                new_val = doc.data['current_stock'] + change
-                db.update_document(DB_ID, COLL_ID, items[target], {
-                                   "current_stock": int(new_val)})
-                st.success("Updated!")
-                st.rerun()
-
-# --- 7. PAGE: CHURN ---
+# --- 5. PAGE: INVENTORY CONTROL ---
 else:
-    st.title("📉 Churn Prediction")
-    score = st.slider("Engagement %", 0, 100, 80)
-    st.metric("Risk", f"{100-score}%")
+    st.title("⚙️ Warehouse Operations")
+
+    with st.form("add_item_form"):
+        st.subheader("Register New Item")
+        new_name = st.text_input("Item Name (e.g. iPhone 15)")
+        new_qty = st.number_input("Opening Stock", min_value=0, step=1)
+        submit = st.form_submit_button("Add to Cloud")
+
+        if submit:
+            if new_name:
+                try:
+                    db.create_document(DB_ID, COLL_ID, ID.unique(), {
+                        "item_name": new_name,
+                        "current_stock": int(new_qty)
+                    })
+                    st.success(f"✅ {new_name} added successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to save: {e}")
+            else:
+                st.warning("Please enter a name for the item.")

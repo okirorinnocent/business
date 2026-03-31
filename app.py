@@ -4,32 +4,30 @@ from appwrite.client import Client
 from appwrite.services.databases import Databases
 from appwrite.id import ID
 import plotly.express as px
-from datetime import datetime
 
-# --- 1. APP CONFIG & UI STYLING ---
+# --- 1. SETTINGS & THEME ---
 st.set_page_config(page_title="SmartStock Pro BI",
                    page_icon="📈", layout="wide")
 
-# Custom CSS for a "Premium Night Mode" look
+# Modern Dark UI Styling
 st.markdown("""
     <style>
     .stApp { background: linear-gradient(135deg, #001f3f 0%, #000814 100%); color: white; }
     [data-testid="stMetric"] {
-        background: rgba(0, 212, 255, 0.05);
+        background: rgba(0, 212, 255, 0.1);
         border: 1px solid #00d4ff;
         border-radius: 15px;
         padding: 15px;
     }
-    .stButton>button {
-        width: 100%;
-        background: linear-gradient(90deg, #007bff, #00d4ff);
-        color: white; border: none; font-weight: bold;
-        border-radius: 8px;
+    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px; background-color: rgba(255,255,255,0.05);
+        border-radius: 5px; color: white;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. SECURE CONNECTION ---
+# --- 2. DATABASE CONNECTION ---
 try:
     client = Client()
     client.set_endpoint(st.secrets["APPWRITE_ENDPOINT"])
@@ -40,126 +38,142 @@ try:
     DB_ID = st.secrets["DATABASE_ID"]
     COLL_ID = st.secrets["INVENTORY_COLLECTION_ID"]
 except Exception as e:
-    st.error(f"⚠️ Connection Error: {e}")
+    st.error(f"❌ Configuration Error: {e}")
     st.stop()
 
-# --- 3. UI HELPER FUNCTIONS ---
+# --- 3. CHART STYLING HELPER ---
 
 
-def apply_executive_style(fig):
-    """Adds a premium look to Plotly charts."""
+def apply_pro_style(fig):
     fig.update_layout(
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font_color="#00d4ff",
-        legend=dict(orientation="h", y=-0.1)
+        margin=dict(l=20, r=20, t=40, b=20)
     )
-    if fig.data[0].type != 'pie':
-        fig.update_traces(marker_color='#00d4ff')
     return fig
 
 
-# --- 4. NAVIGATION ---
+# --- 4. NAVIGATION SIDEBAR ---
 st.sidebar.title("🚀 SmartStock Pro")
-menu = st.sidebar.selectbox(
-    "Navigate", ["Inventory Hub", "Stock Operations", "Customer Churn"])
+page = st.sidebar.radio(
+    "Navigate", ["Business Dashboard", "Inventory Control", "Customer Churn"])
 
-# --- 5. MODULE: INVENTORY HUB (Dashboard) ---
-if menu == "Inventory Hub":
-    st.title("📊 Strategic Inventory Dashboard")
+# --- 5. PAGE: BUSINESS DASHBOARD ---
+if page == "Business Dashboard":
+    st.title("📊 Executive Overview")
 
     try:
-        # Fetch data from Appwrite
+        # Fetch data using .documents (Object Style)
         result = db.list_documents(DB_ID, COLL_ID)
-        df = pd.DataFrame([doc['data'] for doc in result['documents']])
+        raw_docs = result.documents
 
-        if not df.empty:
-            # Layout: Metrics on top
+        if raw_docs:
+            # Prepare data for analytics
+            df = pd.DataFrame([d.data for d in raw_docs])
+
+            # KPI Metrics
             m1, m2, m3 = st.columns(3)
-            m1.metric("Total Assets", len(df))
-            m2.metric("Total Units", f"{df['current_stock'].sum():,}")
+            m1.metric("Total SKU Count", len(df))
+            total_stock = df['current_stock'].sum()
+            m2.metric("Total Units in Warehouse", f"{total_stock:,}")
 
-            low_stock_count = len(df[df['current_stock'] <= 5])
-            m3.metric("Low Stock Alerts", low_stock_count,
-                      delta="- Critical" if low_stock_count > 0 else "Clear")
+            low_stock = len(df[df['current_stock'] <= 5])
+            m3.metric("Low Stock Alerts", low_stock,
+                      delta="- Urgent" if low_stock > 0 else "Optimal")
 
-            # Charts Row
+            # Visual Analytics
             c1, c2 = st.columns(2)
             with c1:
-                st.subheader("Inventory Composition")
+                st.subheader("Inventory Distribution")
                 fig_pie = px.pie(df, names="item_name",
-                                 values="current_stock", hole=0.4)
-                st.plotly_chart(apply_executive_style(
-                    fig_pie), use_container_width=True)
+                                 values="current_stock", hole=0.5)
+                st.plotly_chart(apply_pro_style(fig_pie),
+                                use_container_width=True)
 
             with c2:
-                st.subheader("Current Stock Levels")
-                fig_bar = px.bar(df, x="item_name", y="current_stock")
-                st.plotly_chart(apply_executive_style(
-                    fig_bar), use_container_width=True)
+                st.subheader("Stock Levels by Asset")
+                fig_bar = px.bar(df, x="item_name", y="current_stock",
+                                 color_discrete_sequence=['#00d4ff'])
+                st.plotly_chart(apply_pro_style(fig_bar),
+                                use_container_width=True)
 
-            # Data Table
-            st.subheader("📝 Live Inventory Registry")
+            st.subheader("📋 Detailed Inventory Log")
             st.dataframe(df[['item_name', 'current_stock']],
-                         use_container_width=True)
+                         use_container_width=True, hide_index=True)
+
         else:
-            st.info(
-                "Your warehouse is empty. Head to 'Stock Operations' to add items.")
+            st.info("No data available. Please add items in Inventory Control.")
 
     except Exception as e:
-        st.error(f"Data Fetch Error: {e}")
+        st.error(f"Data Sync Error: {e}")
 
-# --- 6. MODULE: STOCK OPERATIONS (Add/Update/Delete) ---
-elif menu == "Stock Operations":
+# --- 6. PAGE: INVENTORY CONTROL ---
+elif page == "Inventory Control":
     st.title("⚙️ Warehouse Operations")
 
+    # Organize operations into Tabs
     tab1, tab2, tab3 = st.tabs(
-        ["🆕 Add New Item", "🔄 Update Stock", "🗑️ Remove Asset"])
+        ["🆕 Register Item", "🔄 Update Quantity", "🗑️ Remove Asset"])
+
+    # Fetch fresh list of items for dropdowns
+    result = db.list_documents(DB_ID, COLL_ID)
+    items_list = {d.data['item_name']: d.id for d in result.documents}
+    stock_values = {d.data['item_name']: d.data['current_stock']
+                    for d in result.documents}
 
     with tab1:
-        st.subheader("Register New Product")
-        with st.form("add_form"):
+        with st.form("new_item_form"):
             new_name = st.text_input("Product Name")
-            new_stock = st.number_input("Initial Quantity", min_value=0)
-            if st.form_submit_button("Confirm Registration"):
-                db.create_document(DB_ID, COLL_ID, ID.unique(), {
-                                   "item_name": new_name, "current_stock": int(new_stock)})
-                st.success(f"{new_name} added!")
-                st.rerun()
+            new_qty = st.number_input("Starting Quantity", min_value=0)
+            if st.form_submit_button("Deploy to Cloud"):
+                if new_name:
+                    db.create_document(DB_ID, COLL_ID, ID.unique(), {
+                                       "item_name": new_name, "current_stock": int(new_qty)})
+                    st.success(f"Successfully added {new_name}")
+                    st.rerun()
 
     with tab2:
-        st.subheader("Restock or Sale")
-        result = db.list_documents(DB_ID, COLL_ID)
-        items = {doc['item_name']: doc['$id'] for doc in result['documents']}
-        current_vals = {doc['item_name']: doc['current_stock']
-                        for doc in result['documents']}
-
-        target_item = st.selectbox(
-            "Select Product to Update", list(items.keys()))
-        adjustment = st.number_input(
-            "Adjustment (use negative for sales, positive for restock)", step=1)
-
-        if st.button("Apply Changes"):
-            new_total = current_vals[target_item] + adjustment
-            db.update_document(DB_ID, COLL_ID, items[target_item], {
-                               "current_stock": int(new_total)})
-            st.success(f"Stock updated to {new_total}")
-            st.rerun()
+        if items_list:
+            target = st.selectbox("Select Item to Update",
+                                  list(items_list.keys()))
+            change = st.number_input(
+                "Adjustment (+ for restock, - for sales)", step=1)
+            if st.button("Apply Stock Adjustment"):
+                new_total = stock_values[target] + change
+                db.update_document(DB_ID, COLL_ID, items_list[target], {
+                                   "current_stock": int(new_total)})
+                st.success(f"Updated {target} to {new_total} units")
+                st.rerun()
+        else:
+            st.warning("No items found to update.")
 
     with tab3:
-        st.subheader("Danger Zone")
-        target_del = st.selectbox(
-            "Select Product to Delete Forever", list(items.keys()))
-        if st.button("Permanently Delete"):
-            db.delete_document(DB_ID, COLL_ID, items[target_del])
-            st.warning("Item removed.")
-            st.rerun()
+        if items_list:
+            to_delete = st.selectbox("Select Item to Delete", list(
+                items_list.keys()), key="del_box")
+            if st.button("Confirm Permanent Deletion"):
+                db.delete_document(DB_ID, COLL_ID, items_list[to_delete])
+                st.warning(f"Deleted {to_delete}")
+                st.rerun()
 
-# --- 7. MODULE: CUSTOMER CHURN ---
+# --- 7. PAGE: CUSTOMER CHURN ---
 else:
     st.title("📉 Churn Prediction Engine")
-    eng = st.slider("Engagement (%)", 0, 100, 75)
-    risk = max(0, 100 - eng)
-    st.metric("Churn Risk Score",
-              f"{risk}%", delta="CRITICAL" if risk > 70 else "STABLE", delta_color="inverse")
-    st.progress(risk / 100)
+    st.write("Analyze customer retention risk based on engagement metrics.")
+
+    engagement = st.slider("User Engagement Score (%)", 0, 100, 80)
+    risk_score = 100 - engagement
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        st.metric("Risk Level", f"{risk_score}%",
+                  delta="CRITICAL" if risk_score > 60 else "HEALTHY",
+                  delta_color="inverse")
+    with c2:
+        st.progress(risk_score / 100)
+
+    if risk_score > 60:
+        st.error("High Priority: Schedule customer success call immediately.")
+    else:
+        st.success("Customer is stable and engaged.")
